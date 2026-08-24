@@ -1,0 +1,25 @@
+{
+  "name": "scriptmetakitmini",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "setup:notary:mac": "./scripts/setup-notary-profile.sh",
+    "dist:mac:universal": "./scripts/build-mac-universal.sh",
+    "dist:win:x64": "./scripts/build-win-x64.sh",
+    "dist:win:x64:native": "powershell -ExecutionPolicy Bypass -File ./scripts/build-win-x64.ps1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-opener": "^2.5.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "vite": "^8.2.2",
+    "typescript": "~5.9.3"
+  }
+}

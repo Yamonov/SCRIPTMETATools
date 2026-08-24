@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SCRIPTMETAKitMini Ver. 1.1.0 / SCRIPTMETAKit Ver. 1.2.2</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <h1>SCRIPTMETAKitMini Ver. 1.1.0 / SCRIPTMETAKit Ver. 1.2.2</h1>
+          <p class="status-message" id="status-message">
+            ウインドウ全体にフォルダをドロップできます。現在は待機中です。
+          </p>
+        </div>
+        <div class="topbar-actions">
+          <button class="subtle-button" id="clear-button" type="button">
+            クリア
+          </button>
+          <button class="action-button" id="refresh-button" type="button">
+            リスト再読み込み
+          </button>
+          <button class="action-button" id="update-button" type="button">
+            更新チェック
+          </button>
+        </div>
+      </header>
+
+      <section class="drop-status">
+        <p class="drop-copy" id="hero-copy"></p>
+        <div class="summary-metrics" id="summary-chips">
+          <span class="metric-chip">メタ無し 0</span>
+          <span class="metric-chip">LS 0</span>
+          <span class="metric-chip">アップデートあり 0</span>
+          <span class="metric-chip">確認済み 0</span>
+          <span class="metric-chip">エラー 0</span>
+        </div>
+        <div class="hero-progress is-hidden" id="hero-progress" aria-hidden="true">
+          <span class="hero-progress-bar"></span>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <aside class="source-rail" aria-label="登録フォルダ">
+          <div class="rail-heading source-heading">
+            <span>登録フォルダ</span>
+            <div class="rail-heading-tools">
+              <button
+                class="rail-icon-button"
+                id="add-folder-button"
+                type="button"
+                title="フォルダを追加"
+                aria-label="フォルダを追加"
+              >
+                +
+              </button>
+              <strong id="folder-count">0</strong>
+            </div>
+          </div>
+          <div class="folder-list" id="folder-list"></div>
+        </aside>
+
+        <aside class="target-rail" aria-label="ターゲット">
+          <div class="rail-heading">
+            <span>ターゲット</span>
+            <strong id="target-count">0</strong>
+          </div>
+          <div class="target-list" id="target-list"></div>
+        </aside>
+
+        <section class="list-pane" aria-label="登録 script">
+          <div class="list-header">
+            <span class="col-status">状態</span>
+            <span class="col-script">Script</span>
+            <span class="col-version">Version</span>
+            <span class="col-actions">Action</span>
+          </div>
+          <div class="script-list" id="script-list"></div>
+          <div class="empty-state" id="empty-state">
+            <p>まだフォルダが登録されていません。</p>
+          </div>
+        </section>
+
+        <aside class="detail-pane" id="detail-pane" aria-label="script 詳細">
+          <div class="detail-empty">
+            <p>script を選択してください。</p>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </body>
+</html>

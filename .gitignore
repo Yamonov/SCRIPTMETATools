@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+dist/
+Release/
+target/
+**/target/
+*.log
+*.tmp
+.tools/
+.env
+.env.*
+!.env.example
+licenses/cli-rust.md
+licenses/mini-rust.md
+licenses/mini-npm.md
