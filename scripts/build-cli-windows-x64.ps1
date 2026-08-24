@@ -11,6 +11,8 @@ $distDir = Join-Path $root "dist"
 $stageName = "scriptmeta_${version}_windows_x64"
 $stageDir = Join-Path $distDir $stageName
 $zipPath = Join-Path $distDir "${stageName}.zip"
+$existingRustFlags = $env:RUSTFLAGS
+$env:RUSTFLAGS = "$existingRustFlags --remap-path-prefix=$root=. --remap-path-prefix=$env:USERPROFILE=~".Trim()
 
 cargo build --manifest-path $manifest --release --locked
 if ($LASTEXITCODE -ne 0) {
@@ -22,6 +24,11 @@ if (Test-Path -LiteralPath $stageDir) {
 }
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 Copy-Item (Join-Path $root "crates\scriptmetakitcli\target\release\scriptmeta.exe") $stageDir
+$portableExe = Join-Path $stageDir "scriptmeta.exe"
+$binaryText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($portableExe))
+if ($binaryText.Contains($env:USERPROFILE)) {
+    throw "CLI binary contains the local user profile path"
+}
 Copy-Item (Join-Path $root "LICENSE") (Join-Path $stageDir "LICENSE.txt")
 Copy-Item (Join-Path $root "NOTICE") (Join-Path $stageDir "NOTICE.txt")
 Copy-Item (Join-Path $root "THIRD_PARTY_LICENSES.md") $stageDir
@@ -37,5 +44,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "Archive verification failed with exit code $LASTEXITCODE"
 }
 
-Write-Output "Built Windows CLI: $(Join-Path $stageDir 'scriptmeta.exe')"
+Write-Output "Built Windows CLI: $portableExe"
 Write-Output "Built zip: $zipPath"

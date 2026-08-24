@@ -12,6 +12,8 @@ $portableRoot = Join-Path $targetDir "bundle\portable"
 $portableDir = Join-Path $portableRoot $productName
 $zipDir = Join-Path $targetDir "bundle\zip"
 $zipPath = Join-Path $zipDir "${productName}_${version}_windows_x64.zip"
+$existingRustFlags = $env:RUSTFLAGS
+$env:RUSTFLAGS = "$existingRustFlags --remap-path-prefix=$repoRoot=. --remap-path-prefix=$env:USERPROFILE=~".Trim()
 
 function Wait-FileReadable([string]$Path) {
     foreach ($attempt in 1..30) {
@@ -52,6 +54,10 @@ if (Test-Path -LiteralPath $zipPath) {
 }
 $portableExe = Join-Path $portableDir "scriptmetakitmini.exe"
 Wait-FileReadable $portableExe
+$binaryText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($portableExe))
+if ($binaryText.Contains($env:USERPROFILE)) {
+    throw "Mini binary contains the local user profile path"
+}
 tar -a -cf $zipPath -C $portableRoot $productName
 if ($LASTEXITCODE -ne 0) {
     throw "Archive creation failed with exit code $LASTEXITCODE"

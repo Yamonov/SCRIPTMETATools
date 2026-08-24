@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
 
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
+export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }--remap-path-prefix=${REPO_ROOT}=. --remap-path-prefix=${HOME}=~"
 
 submit_notary() {
   local path="$1"
@@ -73,6 +74,11 @@ DMG_PATH="${DMG_DIR}/${PRODUCT_NAME}_${VERSION}_macos_universal.dmg"
 STAGE_DIR="${DMG_DIR}/dmg-staging"
 
 npm run tauri -- build --target universal-apple-darwin --bundles app
+
+if strings "$APP_BUNDLE/Contents/MacOS/scriptmetakitmini" | grep -F "$HOME"; then
+  echo "Mini binary contains the local home path." >&2
+  exit 1
+fi
 
 echo "Submitting app for notarization with profile: $KEYCHAIN_PROFILE"
 rm -f "$APP_ZIP"

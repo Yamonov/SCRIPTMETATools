@@ -10,6 +10,7 @@ STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 UNIVERSAL_BIN="$STAGE_DIR/scriptmeta"
 ZIP_PATH="$DIST_DIR/${STAGE_NAME}.zip"
 KEYCHAIN_PROFILE="${APPLE_KEYCHAIN_PROFILE:-scriptmetakitapp-notary}"
+export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }--remap-path-prefix=${ROOT}=. --remap-path-prefix=${HOME}=~"
 
 resolve_identity() {
   if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
@@ -38,6 +39,10 @@ lipo -create \
   "$ROOT/crates/scriptmetakitcli/target/x86_64-apple-darwin/release/scriptmeta" \
   -output "$UNIVERSAL_BIN"
 codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$UNIVERSAL_BIN"
+if strings "$UNIVERSAL_BIN" | grep -F "$HOME"; then
+  echo "CLI binary contains the local home path." >&2
+  exit 1
+fi
 cp "$ROOT/LICENSE" "$STAGE_DIR/LICENSE.txt"
 cp "$ROOT/NOTICE" "$STAGE_DIR/NOTICE.txt"
 cp "$ROOT/THIRD_PARTY_LICENSES.md" "$STAGE_DIR/THIRD_PARTY_LICENSES.md"
