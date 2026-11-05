@@ -131,15 +131,16 @@ pub fn run_scan(
 
 pub fn run_inspect(path: &Path) -> InspectionReport {
     let inspection = inspect_script_file(path);
-    let (metadata, metadata_error) = match read_script_metadata_draft_from_file(path) {
-        Ok(result) if result.has_existing_block => (Some(result.draft), None),
-        Ok(_) => (None, None),
+    let (metadata, metadata_error, diagnostics) = match read_script_metadata_draft_from_file(path) {
+        Ok(result) if result.has_existing_block => (Some(result.draft), None, result.diagnostics),
+        Ok(_) => (None, None, Vec::new()),
         Err(error) => (
             None,
             Some(ReportError {
                 code: error.code().to_string(),
                 message: error.to_string(),
             }),
+            Vec::new(),
         ),
     };
     InspectionReport {
@@ -151,6 +152,7 @@ pub fn run_inspect(path: &Path) -> InspectionReport {
         inspection,
         metadata,
         metadata_error,
+        diagnostics,
     }
 }
 
@@ -170,14 +172,7 @@ pub fn run_validate(
         let scan = run_scan(&directories, &scan_options, false, false, stderr)?;
         issues.extend(scan.issues);
         for item in scan.items {
-            uniqueness_items.insert(
-                item.path.to_string_lossy().into_owned(),
-                scriptmetakit::ScriptIdUniquenessItem {
-                    item_id: item.path.to_string_lossy().into_owned(),
-                    file_path: item.path,
-                    script_id: item.script_id,
-                },
-            );
+            validate_file(&item.metadata_path, &mut issues, &mut uniqueness_items);
         }
     }
 
@@ -234,6 +229,10 @@ pub fn formats_report() -> FormatsReport {
 
 fn make_engine(options: &Options) -> Result<ScriptMetaKitEngine, CliError> {
     let mut config = ScriptMetaKitConfig::new("scriptmeta", "scriptmeta");
+    config.parser.preferred_languages =
+        scriptmetakit::LanguagePreferences::new(&options.languages)?;
+    config.parser.custom_metadata_keys =
+        scriptmetakit::CustomMetadataSelection::new(&options.custom_keys)?;
     config.cache.enabled = false;
     config.cache.memory_cache = false;
     config.cache.persistent_cache = false;
@@ -305,11 +304,15 @@ fn item_report(
             })
         });
     ItemReport {
+        metadata_path: item.identity_path.clone(),
         status,
         path: item.file_path.clone(),
         root_id: item.root_id.to_string(),
         script_id: item.script_id.clone(),
         name: item.name.clone(),
+        author: item.author.clone(),
+        description: item.description.clone(),
+        presentation: item.presentation.clone(),
         current_version: item.version.clone(),
         latest_version: resolution.and_then(|resolution| resolution.latest_version.clone()),
         meta_url: item.meta_url.as_ref().map(ToString::to_string),
@@ -368,6 +371,26 @@ fn validate_file(
     });
     if has_raw_meta_url && result.draft.meta_url.is_none() {
         issues.push(issue(path, "invalid_meta_url", "Meta-URL is invalid"));
+    }
+    for diagnostic in &result.diagnostics {
+        if diagnostic.code.starts_with("custom_metadata_")
+            || diagnostic.code.starts_with("invalid_")
+            || matches!(
+                diagnostic.code.as_str(),
+                "missing_default_language" | "missing_name"
+            )
+        {
+            issues.push(issue(
+                path,
+                &diagnostic.code,
+                &format!("{} (metadata line {:?})", diagnostic.field, diagnostic.line),
+            ));
+        }
+    }
+    if let Err(error) =
+        scriptmetakit::render_script_metadata_for_style(&result.draft, result.comment_style)
+    {
+        issues.push(issue(path, error.code(), &error.to_string()));
     }
     let item_id = path.to_string_lossy().into_owned();
     uniqueness_items.insert(

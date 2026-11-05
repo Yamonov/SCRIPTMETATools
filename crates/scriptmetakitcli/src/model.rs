@@ -61,11 +61,16 @@ pub struct RootReport {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ItemReport {
+    #[serde(skip)]
+    pub metadata_path: PathBuf,
     pub status: ItemStatus,
     pub path: PathBuf,
     pub root_id: String,
     pub script_id: String,
     pub name: Option<String>,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub presentation: scriptmetakit::MetadataPresentation,
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub meta_url: Option<String>,
@@ -143,6 +148,7 @@ pub struct InspectionReport {
     pub inspection: scriptmetakit::ScriptFileInspection,
     pub metadata: Option<scriptmetakit::ScriptMetadataDraft>,
     pub metadata_error: Option<ReportError>,
+    pub diagnostics: Vec<scriptmetakit::MetadataDiagnostic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

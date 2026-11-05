@@ -1,6 +1,6 @@
 [package]
 name = "scriptmetakitcli"
-version = "0.1.0"
+version = "1.5.0"
 edition = "2024"
 rust-version = "1.94"
 description = "Cross-platform command-line interface for SCRIPTMETAKit."
@@ -16,7 +16,7 @@ clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 ctrlc = "3.4"
 humantime = "2"
-scriptmetakit = { git = "https://github.com/Yamonov/SCRIPTMETAKit.git", tag = "1.2.2", features = ["blocking-http"] }
+scriptmetakit = { git = "https://github.com/Yamonov/SCRIPTMETAKit.git", tag = "2.1.1", features = ["blocking-http"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

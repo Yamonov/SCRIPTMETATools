@@ -53,7 +53,610 @@ type EditableScriptMetadataDraft = {
   editPasswordSha256: string | null;
 };
 
+type LocalizedText = { name: string | null; author: string | null; description: string | null };
+type LocalizationEditor = {
+  default_language: string | null;
+  translations: Record<string, LocalizedText>;
+  unqualified: LocalizedText;
+};
+type AdvancedMetadata = {
+  localization: LocalizationEditor;
+  tags: string[];
+  customFields: Record<string, string[]>;
+  customText?: string | null;
+};
+let advancedMetadata: AdvancedMetadata | null = null;
+let selectedLanguage: string | null = null;
+let languageOrder: string[] = [];
+let multilingualChecked = true;
+let originalLocalization: LocalizationEditor | null = null;
+let languageOrigins = new Map<string, string>();
+let ordinaryLanguageOrigin = "";
+let localizedTextChanges: Record<keyof LocalizedText, Map<string, string>> = { name: new Map(), author: new Map(), description: new Map() };
+let selectedFieldLanguages: Record<keyof LocalizedText, string | null> = { name: null, author: null, description: null };
+type CustomTextIssue = { line: number; message: string };
+type CustomTextValidation = { fields: Record<string, string[]>; issues: CustomTextIssue[] };
+let customTextIssues: CustomTextIssue[] = [];
+let customTextView: { repaint: () => void } | null = null;
+let customValidationPending = false;
+let editorComposing = false;
+let languageOperationPending = false;
+let advancedRevision = 0;
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+function loadAdvanced(document: ScriptMetadataEditDocument, preserveSelection = false): void {
+  const previous = selectedFieldLanguages;
+  const previousOrder = preserveSelection ? languageOrder : [];
+  const previousRow = preserveSelection ? selectedLanguage : null;
+  advancedMetadata = document.advanced ? structuredClone(document.advanced) : null;
+  originalLocalization = advancedMetadata ? structuredClone(advancedMetadata.localization) : null;
+  languageOrder = previousOrder;
+  languageOrder = advancedMetadata ? orderedEditorLanguages(advancedMetadata.localization) : [];
+  multilingualChecked = languageOrder.length > 0;
+  languageOrigins = new Map(languageOrder.map(language => [language, language]));
+  ordinaryLanguageOrigin = "";
+  localizedTextChanges = { name: new Map(), author: new Map(), description: new Map() };
+  selectedLanguage = previousRow && languageOrder.includes(previousRow) ? previousRow : null;
+  const first = languageOrder[0] ?? null;
+  selectedFieldLanguages = { name: first, author: first, description: first };
+  if (preserveSelection) {
+    for (const field of ["name", "author", "description"] as const) {
+      const language = previous[field];
+      if (language && advancedMetadata?.localization.translations[language]) selectedFieldLanguages[field] = language;
+    }
+  }
+  customTextIssues = [];
+  customTextView = null;
+  customValidationPending = false;
+  editorComposing = false;
+  advancedRevision++;
+}
+
+function advancedChanged(): void {
+  state.editorDirty = true;
+  advancedRevision++;
+  if (editorComposing) return;
+  const button = detailPaneEl?.querySelector<HTMLButtonElement>(".detail-save");
+  const validation = detailPaneEl?.querySelector<HTMLElement>(".detail-validation");
+  if (button && validation) syncEditorControls(button, validation);
+}
+
+function advancedDisabled(): boolean {
+  const script = selectedScript();
+  return state.isSavingDetail || isEditorLocked() || languageOperationPending
+    || !["editable", "appendable"].includes(script?.scriptmetaEditState ?? "");
+}
+
+function editorButton(text: string, action: () => void): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = text;
+  button.className = "field-mini-button";
+  button.disabled = advancedDisabled();
+  button.addEventListener("click", action);
+  return button;
+}
+
+const LANGUAGE_CHOICES = [
+  ["ja", "日本語"], ["en", "英語"], ["zh", "中国語"], ["ko", "韓国語"],
+  ["ar", "アラビア語"], ["bg", "ブルガリア語"], ["bn", "ベンガル語"], ["ca", "カタルーニャ語"],
+  ["cs", "チェコ語"], ["da", "デンマーク語"], ["de", "ドイツ語"], ["el", "ギリシャ語"],
+  ["es", "スペイン語"], ["et", "エストニア語"], ["fa", "ペルシア語"], ["fi", "フィンランド語"],
+  ["fr", "フランス語"], ["he", "ヘブライ語"], ["hi", "ヒンディー語"], ["hr", "クロアチア語"],
+  ["hu", "ハンガリー語"], ["id", "インドネシア語"], ["it", "イタリア語"], ["lt", "リトアニア語"],
+  ["lv", "ラトビア語"], ["ms", "マレー語"], ["nb", "ノルウェー語（ブークモール）"], ["nl", "オランダ語"],
+  ["pl", "ポーランド語"], ["pt", "ポルトガル語"], ["ro", "ルーマニア語"], ["ru", "ロシア語"],
+  ["sk", "スロバキア語"], ["sl", "スロベニア語"], ["sr", "セルビア語"], ["sv", "スウェーデン語"],
+  ["th", "タイ語"], ["tr", "トルコ語"], ["uk", "ウクライナ語"], ["vi", "ベトナム語"],
+] as const;
+const MAX_ADDED_LANGUAGES = 10;
+const languageDisplayNames = typeof Intl.DisplayNames === "function"
+  ? new Intl.DisplayNames(["ja"], { type: "language" }) : null;
+
+function languageDisplayName(language: string): string {
+  const known = LANGUAGE_CHOICES.find(choice => choice[0] === language)?.[1];
+  if (known) return known;
+  try { return languageDisplayNames?.of(language) ?? language; }
+  catch { return language; }
+}
+type LanguageChange = { kind: "add" | "remove"; language: string } | { kind: "move"; language: string; destination: number };
+
+function orderedEditorLanguages(editor: LocalizationEditor): string[] {
+  const known = Object.keys(editor.translations).sort();
+  const order = languageOrder.filter(language => known.includes(language));
+  for (const language of known) if (!order.includes(language)) order.push(language);
+  return editor.default_language
+    ? [editor.default_language, ...order.filter(language => language !== editor.default_language)] : order;
+}
+
+function recordLocalizedTextChange(field: keyof LocalizedText, language: string | null, value: string): void {
+  const origin = language ? languageOrigins.get(language) ?? language : ordinaryLanguageOrigin;
+  localizedTextChanges[field].set(origin, value);
+}
+
+function effectiveLocalizationEditor(): LocalizationEditor | null {
+  if (!advancedMetadata) return null;
+  if (multilingualChecked || !originalLocalization) return advancedMetadata.localization;
+  const editor = structuredClone(originalLocalization);
+  for (const field of ["name", "author", "description"] as const) {
+    for (const [origin, value] of localizedTextChanges[field]) {
+      if (!origin && !editor.default_language) editor.unqualified[field] = value;
+      else if (editor.translations[origin]) editor.translations[origin][field] = value;
+    }
+  }
+  return editor;
+}
+
+function effectiveAdvancedMetadata(): AdvancedMetadata | null {
+  const localization = effectiveLocalizationEditor();
+  if (!advancedMetadata || !localization) return null;
+  return { ...structuredClone(advancedMetadata), localization: structuredClone(localization) };
+}
+
+async function changeLanguage(change: LanguageChange): Promise<void> {
+  if (!advancedMetadata || advancedDisabled() || !multilingualChecked || editorComposing) return;
+  const current = advancedMetadata;
+  const document = state.metadataDocument;
+  const order = orderedEditorLanguages(current.localization);
+  const language = change.language;
+  if (change.kind === "add" && (order.length >= MAX_ADDED_LANGUAGES || order.includes(language))) return;
+  if (change.kind !== "add" && !order.includes(language)) return;
+  const nextOrder = [...order];
+  if (change.kind === "move") {
+    const source = nextOrder.indexOf(language);
+    if (change.destination < 0 || change.destination > order.length) return;
+    nextOrder.splice(source, 1);
+    nextOrder.splice(change.destination > source ? change.destination - 1 : change.destination, 0, language);
+    if (nextOrder.every((value, index) => value === order[index])) return;
+  } else if (change.kind === "add") nextOrder.push(language);
+  else nextOrder.splice(nextOrder.indexOf(language), 1);
+
+  languageOperationPending = true;
+  renderDetailPane();
+  try {
+    let editor = structuredClone(current.localization);
+    const edit = async (operation: Record<string, string>) => {
+      editor = await invoke<LocalizationEditor>("edit_metadata_language", { editor, operation });
+    };
+    if (change.kind === "add") {
+      await edit({ operation: order.length ? "add_language" : "set_default_language", language });
+    } else if (change.kind === "remove") {
+      await edit({ operation: "remove_language", language });
+      if (!editor.default_language && nextOrder[0]) {
+        await edit({ operation: "set_default_language", language: nextOrder[0] });
+      }
+    } else if (nextOrder[0] !== editor.default_language) {
+      await edit({ operation: "set_default_language", language: nextOrder[0] });
+    }
+    if (state.metadataDocument !== document || advancedMetadata !== current) return;
+    const metadataChanged = change.kind !== "move" || editor.default_language !== current.localization.default_language;
+    if (change.kind === "add") {
+      languageOrigins.set(language, order.length ? language : ordinaryLanguageOrigin);
+      selectedLanguage = language;
+    } else if (change.kind === "remove") {
+      if (!nextOrder.length) ordinaryLanguageOrigin = languageOrigins.get(language) ?? language;
+      languageOrigins.delete(language);
+      selectedLanguage = null;
+    }
+    current.localization = editor;
+    languageOrder = nextOrder;
+    for (const field of ["name", "author", "description"] as const) {
+      const selected = selectedFieldLanguages[field];
+      if (!selected || !nextOrder.includes(selected)) selectedFieldLanguages[field] = nextOrder[0] ?? null;
+    }
+    if (metadataChanged) advancedChanged();
+  } catch (error) {
+    if (state.metadataDocument === document) state.detailMessage = `言語の変更に失敗しました: ${String(error)}`;
+  } finally {
+    languageOperationPending = false;
+    renderDetailPane();
+  }
+}
+
+function createLanguageEditor(): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "metadata-field language-settings";
+  const caption = document.createElement("label");
+  caption.className = "language-settings-caption";
+  const checked = document.createElement("input");
+  checked.type = "checkbox";
+  checked.checked = multilingualChecked;
+  checked.disabled = advancedDisabled();
+  const title = document.createElement("strong");
+  title.textContent = "多言語対応";
+  caption.append(checked, title);
+
+  const box = document.createElement("div");
+  box.className = "language-list-box";
+  const list = document.createElement("div");
+  list.className = "language-list";
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", "多言語対応");
+  const languages = orderedEditorLanguages(advancedMetadata!.localization);
+  const rows: HTMLButtonElement[] = [];
+  let dragged: string | null = null;
+  const disabled = () => advancedDisabled() || !multilingualChecked;
+  const clearDrop = () => rows.forEach(row => { row.classList.remove("drop-before", "drop-after"); });
+  const choose = (language: string) => {
+    if (disabled()) return;
+    selectedLanguage = language;
+    rows.forEach(row => {
+      const selected = row.dataset.language === language;
+      row.classList.toggle("is-selected", selected);
+      row.setAttribute("aria-selected", String(selected));
+    });
+    remove.disabled = disabled() || !selectedLanguage;
+    confirmation.hidden = true;
+  };
+
+  for (const [index, language] of languages.entries()) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "language-list-row";
+    row.dataset.language = language;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(selectedLanguage === language));
+    row.classList.toggle("is-selected", selectedLanguage === language);
+    const code = document.createElement("span");
+    code.className = "language-code";
+    code.textContent = language;
+    const name = document.createElement("span");
+    name.className = "language-name";
+    const displayName = languageDisplayName(language);
+    name.textContent = `${displayName}${index === 0 ? "　★既定言語" : ""}`;
+    row.title = `${language} ${name.textContent}`;
+    row.append(code, name);
+    row.addEventListener("click", () => choose(language));
+    row.addEventListener("keydown", event => {
+      if (disabled() || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.altKey) {
+        void changeLanguage({kind:"move",language,destination:event.key === "ArrowUp" ? index - 1 : index + 2});
+      } else {
+        const next = rows[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowUp" ? -1 : 1)))];
+        if (next.dataset.language) choose(next.dataset.language);
+        next.focus();
+      }
+    });
+    row.addEventListener("dragstart", event => {
+      if (disabled() || !event.dataTransfer) { event.preventDefault(); return; }
+      dragged = language;
+      event.dataTransfer.setData("text/x-scriptmeta-language", language);
+      event.dataTransfer.effectAllowed = "move";
+    });
+    row.addEventListener("dragover", event => {
+      if (disabled() || !dragged) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearDrop();
+      row.classList.add(event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2 ? "drop-before" : "drop-after");
+    });
+    row.addEventListener("dragleave", clearDrop);
+    row.addEventListener("dragend", () => { dragged = null; clearDrop(); });
+    row.addEventListener("drop", event => {
+      if (disabled() || !dragged || event.dataTransfer?.getData("text/x-scriptmeta-language") !== dragged) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const destination = index + (event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2 ? 0 : 1);
+      const source = dragged;
+      dragged = null;
+      clearDrop();
+      void changeLanguage({ kind:"move",language:source,destination });
+    });
+    rows.push(row);
+    list.append(row);
+  }
+  list.addEventListener("dragover", event => { if (!disabled() && dragged) event.preventDefault(); });
+  list.addEventListener("drop", event => {
+    if (event.target !== list || disabled() || !dragged) return;
+    event.preventDefault();
+    const source = dragged;
+    dragged = null;
+    clearDrop();
+    void changeLanguage({kind:"move",language:source,destination:languages.length});
+  });
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "language-list-toolbar";
+  const add = document.createElement("select");
+  add.className = "language-add-menu";
+  add.setAttribute("aria-label", "言語を追加");
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "+";
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  add.append(placeholder);
+  for (const [code, name] of LANGUAGE_CHOICES) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = `${name}｜${code}`;
+    option.disabled = languages.includes(code);
+    add.append(option);
+  }
+  add.addEventListener("change", () => {
+    const language = add.value;
+    add.value = "";
+    if (language) void changeLanguage({kind:"add",language});
+  });
+  const remove = editorButton("−", () => {
+    if (!disabled() && selectedLanguage) {
+      pendingRemoval = selectedLanguage;
+      removeTitle.textContent = `言語「${pendingRemoval}」を削除しますか？`;
+      removalMessage.textContent = languages.length === 1
+        ? "最後の言語の内容は通常のName・Author・Descriptionとして残し、既定言語の指定を削除します。"
+        : "この言語のName・Author・Descriptionを削除します。既定言語の場合は、次の言語を既定にします。";
+      confirmation.hidden = false;
+    }
+  });
+  remove.className = "language-remove-button";
+  remove.setAttribute("aria-label", "選択した言語を削除");
+  toolbar.append(add, remove);
+  box.append(list, toolbar);
+
+  const confirmation = document.createElement("div");
+  confirmation.className = "language-removal-confirmation";
+  confirmation.hidden = true;
+  confirmation.setAttribute("role", "alertdialog");
+  confirmation.setAttribute("aria-labelledby", "language-remove-title");
+  const removeTitle = document.createElement("strong");
+  removeTitle.id = "language-remove-title";
+  const removalMessage = document.createElement("p");
+  let pendingRemoval: string | null = null;
+  const actions = document.createElement("div");
+  actions.className = "advanced-actions";
+  actions.append(editorButton("キャンセル", () => { confirmation.hidden = true; }), editorButton("削除", () => {
+    if (pendingRemoval && multilingualChecked) void changeLanguage({kind:"remove",language:pendingRemoval});
+    confirmation.hidden = true;
+  }));
+  confirmation.append(removeTitle, removalMessage, actions);
+  const sync = () => {
+    box.classList.toggle("is-disabled", !multilingualChecked);
+    for (const row of rows) { row.disabled = disabled(); row.draggable = !disabled(); }
+    add.disabled = disabled() || languages.length >= MAX_ADDED_LANGUAGES;
+    remove.disabled = disabled() || !selectedLanguage;
+    list.setAttribute("aria-disabled", String(disabled()));
+  };
+  checked.addEventListener("change", () => {
+    multilingualChecked = checked.checked;
+    confirmation.hidden = true;
+    sync();
+    advancedChanged();
+  });
+  sync();
+  section.append(caption, box, confirmation);
+  return section;
+}
+
+function createLocalizedField(field: keyof LocalizedText): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = `metadata-field field-${field}${field === "description" ? " is-textarea" : ""}`;
+  const title = document.createElement("strong");
+  title.textContent = fieldTagTitle(field);
+  const editor = advancedMetadata!.localization;
+  const languages = orderedEditorLanguages(editor);
+  const selected = selectedFieldLanguages[field];
+  selectedFieldLanguages[field] = selected && languages.includes(selected)
+    ? selected : languages[0] ?? null;
+  const tabs = document.createElement("div");
+  tabs.className = "language-tabs";
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", `${fieldTagTitle(field)}の言語`);
+  const content = document.createElement("div");
+  content.className = languages.length ? "language-content" : "";
+  const controls: { language: string | null; button: HTMLButtonElement; panel: HTMLElement }[] = [];
+  const select = (language: string | null) => {
+    selectedFieldLanguages[field] = language;
+    for (const control of controls) {
+      const active = control.language === language;
+      control.button.classList.toggle("is-selected", active);
+      control.button.setAttribute("aria-selected", String(active));
+      control.panel.hidden = !active;
+    }
+  };
+
+  for (const language of languages.length ? languages : [null]) {
+    const text = language ? editor.translations[language] : editor.unqualified;
+    const button = editorButton(language ?? "言語指定なし", () => select(language));
+    button.className = "language-tab";
+    button.id = `metadata-${field}-${language ?? "plain"}-tab`;
+    button.setAttribute("role", "tab");
+    const panel = document.createElement("div");
+    panel.className = "language-panel";
+    panel.id = `metadata-${field}-${language ?? "plain"}-panel`;
+    if (languages.length) {
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", button.id);
+    }
+    button.setAttribute("aria-controls", panel.id);
+    const updateEmptyState = () => {
+      const empty = !(text[field]?.trim());
+      button.classList.toggle("is-empty", empty);
+      button.setAttribute("aria-label", `${language ?? "言語指定なし"}${empty ? "（未入力）" : ""}`);
+    };
+    updateEmptyState();
+    const input = document.createElement(field === "description" ? "textarea" : "input");
+    input.className = "metadata-control";
+    input.setAttribute("aria-label", `${fieldTagTitle(field)}${language ? ` [${language}]` : ""}`);
+    input.value = text[field] ?? "";
+    input.disabled = advancedDisabled();
+    if (input instanceof HTMLTextAreaElement) input.rows = 5;
+    input.addEventListener("compositionstart", () => setEditorComposing(true));
+    input.addEventListener("compositionend", () => {
+      text[field] = input.value;
+      recordLocalizedTextChange(field, language, input.value);
+      updateEmptyState();
+      setEditorComposing(false);
+      advancedChanged();
+    });
+    input.addEventListener("input", () => {
+      text[field] = input.value;
+      recordLocalizedTextChange(field, language, input.value);
+      updateEmptyState();
+      advancedChanged();
+    });
+    panel.append(input);
+    controls.push({ language, button, panel });
+    tabs.append(button);
+    content.append(panel);
+    button.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const index = controls.findIndex(control => control.language === language);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + controls.length) % controls.length;
+      select(controls[next].language);
+      controls[next].button.focus();
+    });
+  }
+  select(selectedFieldLanguages[field]);
+  wrapper.append(title);
+  if (languages.length) wrapper.append(tabs);
+  wrapper.append(content);
+  return wrapper;
+}
+
+function createTagsEditor(): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "metadata-field field-tags";
+  const title = document.createElement("strong");
+  title.textContent = "Tags（言語共通）";
+  const chips = document.createElement("div");
+  chips.className = "advanced-actions tag-chips";
+  const drawTags = () => {
+    chips.replaceChildren();
+    advancedMetadata!.tags.forEach((tag, index) => chips.append(editorButton(`${tag} ×`, () => {
+      advancedMetadata!.tags.splice(index, 1); advancedChanged(); drawTags();
+    })));
+  };
+  drawTags();
+  const input = document.createElement("input");
+  input.className = "metadata-control";
+  input.placeholder = "タグを入力し、Enterまたはカンマで追加";
+  input.setAttribute("aria-label", "タグを追加");
+  input.disabled = advancedDisabled();
+  const commit = () => {
+    const tags = input.value.split(",").map(value => value.trim()).filter(Boolean);
+    if (tags.length) { advancedMetadata!.tags.push(...tags); input.value = ""; advancedChanged(); drawTags(); }
+  };
+  input.addEventListener("keydown", event => {
+    if (!event.isComposing && (event.key === "Enter" || event.key === ",")) { event.preventDefault(); commit(); }
+  });
+  input.addEventListener("change", commit);
+  wrapper.append(title, chips, input);
+  return wrapper;
+}
+
+function currentCustomText(): string {
+  return advancedMetadata?.customText
+    ?? Object.entries(advancedMetadata?.customFields ?? {}).flatMap(([key, values]) => values.map(value => `${key}=${value}`)).join("\n");
+}
+
+function setCustomTextIssues(issues: CustomTextIssue[]): void {
+  customTextIssues = issues;
+  customTextView?.repaint();
+}
+
+function setEditorComposing(composing: boolean): void {
+  editorComposing = composing;
+  if (composing) {
+    clearTimeout(previewTimer);
+    advancedRevision++;
+    const save = detailPaneEl?.querySelector<HTMLButtonElement>(".detail-save");
+    if (save) save.disabled = true;
+  }
+}
+
+function createCustomEditor(): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "metadata-field custom-editor";
+  const label = document.createElement("label");
+  label.textContent = "ユーザー拡張キー";
+  label.htmlFor = "custom-metadata-text";
+  const editor = document.createElement("div");
+  editor.className = "custom-text-editor";
+  const gutter = document.createElement("div");
+  gutter.className = "custom-line-numbers";
+  gutter.setAttribute("aria-hidden", "true");
+  const highlights = document.createElement("div");
+  highlights.className = "custom-line-highlights";
+  highlights.setAttribute("aria-hidden", "true");
+  const input = document.createElement("textarea");
+  input.id = "custom-metadata-text";
+  input.className = "custom-text-input";
+  input.setAttribute("aria-label", "ユーザー拡張キー（1行にキー=値）");
+  input.setAttribute("aria-describedby", "custom-metadata-issues");
+  input.wrap = "off";
+  input.rows = 4;
+  input.spellcheck = false;
+  input.autocomplete = "off";
+  input.value = currentCustomText();
+  input.placeholder = "X-iw-Group=制作ツール\nX-iw-Order=20";
+  input.disabled = advancedDisabled();
+  const message = document.createElement("small");
+  message.id = "custom-metadata-issues";
+  message.className = "custom-text-issues";
+  message.setAttribute("aria-live", "polite");
+  const syncScroll = () => {
+    const transform = `translateY(${-input.scrollTop}px)`;
+    gutter.style.transform = transform;
+    highlights.style.transform = transform;
+  };
+  let numberRows: HTMLElement[] = [];
+  let backgroundRows: HTMLElement[] = [];
+  let lastIssues = "";
+  const repaint = () => {
+    const count = input.value.split("\n").length;
+    const countChanged = numberRows.length !== count;
+    if (countChanged) {
+      numberRows = [];
+      backgroundRows = [];
+      for (let index = 0; index < count; index++) {
+        const number = document.createElement("div");
+        number.textContent = String(index + 1);
+        numberRows.push(number);
+        backgroundRows.push(document.createElement("div"));
+      }
+      gutter.replaceChildren(...numberRows);
+      highlights.replaceChildren(...backgroundRows);
+    }
+    const signature = JSON.stringify(customTextIssues);
+    if (countChanged || signature !== lastIssues) {
+      const invalid = new Set(customTextIssues.map(issue => issue.line));
+      for (let index = 0; index < count; index++) {
+        numberRows[index].classList.toggle("is-invalid", invalid.has(index + 1));
+        backgroundRows[index].classList.toggle("is-invalid", invalid.has(index + 1));
+      }
+      input.setAttribute("aria-invalid", String(invalid.size > 0));
+      const first = customTextIssues[0];
+      message.textContent = first
+        ? `${first.line}行目: ${first.message}${invalid.size > 1 ? `（ほか${invalid.size - 1}行）` : ""}` : "";
+      lastIssues = signature;
+    }
+    // Decorations never replace the textarea, change its value, or touch its selection.
+    syncScroll();
+  };
+  const changed = () => {
+    if (!advancedMetadata) return;
+    advancedMetadata.customText = input.value;
+    customTextIssues = [];
+    customValidationPending = true;
+    repaint();
+    advancedChanged();
+  };
+  input.addEventListener("input", changed);
+  input.addEventListener("compositionstart", () => setEditorComposing(true));
+  input.addEventListener("compositionend", () => { setEditorComposing(false); changed(); });
+  input.addEventListener("scroll", syncScroll);
+  editor.append(highlights, gutter, input);
+  wrapper.append(label, editor, message);
+  customTextView = { repaint };
+  repaint();
+  return wrapper;
+}
+
 type ScriptMetadataEditDocument = {
+  advanced?: AdvancedMetadata | null;
   filePath: string;
   draft: EditableScriptMetadataDraft;
   commentStyle: string;
@@ -676,10 +1279,10 @@ function applyBrowserPreviewState(): void {
 
   const previewRecords: RegisteredScript[] = [
     {
-      recordKey: "/Users/example/Scripts/Photoshop/Export Layers.jsx",
+      recordKey: "/Users/yamo/Scripts/Photoshop/Export Layers.jsx",
       scriptId: "com.example.exportlayers",
       fileName: "Export Layers.jsx",
-      filePath: "/Users/example/Scripts/Photoshop/Export Layers.jsx",
+      filePath: "/Users/yamo/Scripts/Photoshop/Export Layers.jsx",
       version: "1.2.0",
       targetApp: "Photoshop",
       descriptionText: "Layer export helper with SCRIPTMETA distribution data.",
@@ -696,10 +1299,10 @@ function applyBrowserPreviewState(): void {
       scriptmetaEditState: "editable",
     },
     {
-      recordKey: "/Users/example/Scripts/Illustrator/Artboard Navigator.jsx",
+      recordKey: "/Users/yamo/Scripts/Illustrator/Artboard Navigator.jsx",
       scriptId: "com.example.artboardnavigator",
       fileName: "Artboard Navigator.jsx",
-      filePath: "/Users/example/Scripts/Illustrator/Artboard Navigator.jsx",
+      filePath: "/Users/yamo/Scripts/Illustrator/Artboard Navigator.jsx",
       version: "1.0.3",
       targetApp: "Illustrator",
       descriptionText: "Artboard navigation helper.",
@@ -716,10 +1319,10 @@ function applyBrowserPreviewState(): void {
       scriptmetaEditState: "editable",
     },
     {
-      recordKey: "/Users/example/Scripts/Photoshop/Watermark.jsx",
+      recordKey: "/Users/yamo/Scripts/Photoshop/Watermark.jsx",
       scriptId: "",
       fileName: "Watermark.jsx",
-      filePath: "/Users/example/Scripts/Photoshop/Watermark.jsx",
+      filePath: "/Users/yamo/Scripts/Photoshop/Watermark.jsx",
       version: null,
       targetApp: "Photoshop",
       descriptionText: null,
@@ -737,7 +1340,7 @@ function applyBrowserPreviewState(): void {
     },
   ];
 
-  state.folders = ["/Users/example/Scripts"];
+  state.folders = ["/Users/yamo/Scripts"];
   state.records = new Map(
     previewRecords.map((record) => [record.recordKey, record] as const),
   );
@@ -1031,6 +1634,7 @@ function renderDetailPane(): void {
   editorSection.className = `editor-section${isEditorLocked() ? " is-locked" : ""}`;
   editorSection.append(createModeSelector());
 
+
   const saveButton = document.createElement("button");
   saveButton.className = "action-button detail-save";
   saveButton.type = "button";
@@ -1051,12 +1655,22 @@ function renderDetailPane(): void {
 
   const visibleFields = visibleFieldsForMode(state.editorMode);
   for (const field of visibleFields) {
-    if (field === "targetApp") {
+    if (advancedMetadata && (field === "name" || field === "author" || field === "description")) {
+      if (field === "description") form.append(createTagsEditor(), createCustomEditor());
+      form.append(createLocalizedField(field));
+
+    } else if (field === "targetApp") {
       form.append(createTargetAppField(field, state.editorDraft.targetApp));
     } else if (field === "description") {
       form.append(createTextAreaField(field, state.editorDraft.description));
     } else {
       form.append(createInputField(field, state.editorDraft[field]));
+      if (field === "scriptId" && advancedMetadata) {
+        const row = document.createElement("div");
+        row.className = "language-password-row";
+        row.append(createLanguageEditor(), createEditPasswordSettingField());
+        form.append(row);
+      }
       if (field === "author") {
         form.append(createEditPasswordSettingField());
       }
@@ -1772,7 +2386,7 @@ function syncEditorControls(
     !canWrite ||
     errors.length > 0 ||
     state.isSavingDetail ||
-    !hasUserChanges();
+    !hasUserChanges() || languageOperationPending || editorComposing || customValidationPending || customTextIssues.length > 0;
   if (state.editorDraft && state.metadataDocument) {
     const effectiveDraft = effectiveDraftForSave();
     const previewDraft = effectiveDraft;
@@ -1781,10 +2395,50 @@ function syncEditorControls(
     const distributionPreview =
       detailPaneEl?.querySelector<HTMLElement>(".distribution-preview-code") ?? null;
     if (scriptmetaPreview) {
-      scriptmetaPreview.textContent = renderMetadataPreview(
-        previewDraft,
-        state.metadataDocument.commentStyle,
-      );
+      if (advancedMetadata && isTauriRuntime()) {
+        clearTimeout(previewTimer);
+        if (editorComposing) return;
+        const advanced = effectiveAdvancedMetadata();
+        const customText = currentCustomText();
+        customValidationPending = true;
+        const revision = ++advancedRevision;
+        const document = state.metadataDocument;
+        scriptmetaPreview.textContent = "プレビューを更新中...";
+        saveButton.disabled = true;
+        previewTimer = setTimeout(async () => {
+          try {
+            const result = await invoke<CustomTextValidation>("validate_custom_metadata_text", {
+              text: customText, originalCustomFields: document.advanced?.customFields ?? {}, style: document.commentStyle,
+            });
+            if (revision !== advancedRevision || document !== state.metadataDocument || editorComposing) return;
+            customValidationPending = false;
+            setCustomTextIssues(result.issues);
+            if (result.issues.length > 0) {
+              validation.textContent = "ユーザー拡張キーの赤い行を確認してください。";
+              validation.classList.add("is-error");
+              scriptmetaPreview.textContent = "拡張キーの入力内容を確認してください。";
+              saveButton.disabled = true;
+              return;
+            }
+            const preview = await invoke<string>("preview_metadata", {
+              draft: previewDraft, advanced, style: document.commentStyle,
+              originalBlock: document.existingBlockText, originalCustomFields: document.advanced?.customFields ?? {},
+            });
+            if (revision !== advancedRevision || document !== state.metadataDocument) return;
+            scriptmetaPreview.textContent = preview;
+            saveButton.disabled = isEditorLocked() || !canWrite || errors.length > 0 || state.isSavingDetail || !hasUserChanges() || languageOperationPending || editorComposing;
+          } catch (error) {
+            if (revision !== advancedRevision || document !== state.metadataDocument) return;
+            customValidationPending = false;
+            scriptmetaPreview.textContent = "入力内容を確認してください。";
+            validation.textContent = String(error);
+            validation.classList.add("is-error");
+            saveButton.disabled = true;
+          }
+        }, 300);
+      } else {
+        scriptmetaPreview.textContent = renderMetadataPreview(previewDraft, state.metadataDocument.commentStyle);
+      }
     }
     if (distributionPreview) {
       distributionPreview.textContent = renderDistributionPreview(previewDraft);
@@ -1927,6 +2581,13 @@ function effectiveDraftForSave(): EditableScriptMetadataDraft {
     "editPasswordSha256",
   );
 
+  if (advancedMetadata) {
+    const editor = effectiveLocalizationEditor()!;
+    const text = editor.default_language ? editor.translations[editor.default_language] : editor.unqualified;
+    draft.name = text?.name ?? null;
+    draft.author = text?.author ?? null;
+    draft.description = text?.description ?? null;
+  }
   return normalizeEditorDraft(draft);
 }
 
@@ -2164,6 +2825,7 @@ async function selectScript(recordKey: string, forceReload = false): Promise<voi
 
     state.metadataDocument = document;
     const hasExistingBlock = documentHasExistingBlockForScript(document, script);
+    loadAdvanced(document);
     state.editorDraft = editorDraftForDocument(document, script, hasExistingBlock);
     state.editorMode = editorModeFromDraft(document, state.editorDraft, hasExistingBlock);
     state.checkedFields = initialCheckedFields(document, state.editorDraft, hasExistingBlock);
@@ -2193,6 +2855,10 @@ async function saveSelectedScript(): Promise<void> {
     !state.metadataDocument ||
     !state.editorDraft ||
     state.isSavingDetail ||
+    languageOperationPending ||
+    editorComposing ||
+    customValidationPending ||
+    customTextIssues.length > 0 ||
     isEditorLocked()
   ) {
     return;
@@ -2209,6 +2875,7 @@ async function saveSelectedScript(): Promise<void> {
           request: {
             filePath: state.metadataDocument.filePath,
             draft: effectiveDraft,
+            advanced: effectiveAdvancedMetadata(),
             mode: state.editorMode,
             checkedFields: [...state.checkedFields],
             sourceFingerprint: state.metadataDocument.sourceFingerprint,
@@ -2221,12 +2888,14 @@ async function saveSelectedScript(): Promise<void> {
           document: {
             ...state.metadataDocument,
             draft: effectiveDraft,
+            advanced: effectiveAdvancedMetadata(),
             hasExistingBlock: true,
             sourceFingerprint: `browser:${Date.now()}`,
           },
         };
 
     state.metadataDocument = result.document;
+    loadAdvanced(result.document, true);
     state.editorDraft = normalizeEditorDraft(result.document.draft);
     state.editorMode = editorModeFromDraft(result.document, state.editorDraft);
     state.checkedFields = initialCheckedFields(result.document, state.editorDraft);

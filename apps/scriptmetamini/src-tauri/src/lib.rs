@@ -1,11 +1,14 @@
+mod custom_text;
+
 use scriptmetakit::{
-    DistributionResolverOptions, FileSystemEntry, PathResolutionStatus, RootPreflightOptions,
-    ScanMode, ScannerOptions, ScriptMetaBackupOptions, ScriptMetaCommentStyle, ScriptMetaItem,
+    DistributionResolverOptions, FileSystemEntry, MetadataLocalizationEditor,
+    MetadataLocalizationOperation, PathResolutionStatus, RootPreflightOptions, ScanMode,
+    ScannerOptions, ScriptMetaBackupOptions, ScriptMetaCommentStyle, ScriptMetaItem,
     ScriptMetaKitConfig, ScriptMetaKitEngine, ScriptMetaWriteMode, ScriptMetaWriteOperation,
     ScriptMetadata, ScriptMetadataDraft, UpdateResolver, UpdateStatus,
     generate_edit_password_sha256, is_valid_edit_password_sha256, normalize_metadata_url,
     read_script_metadata_draft_from_file, resolve_registered_path, verify_edit_password_sha256,
-    write_script_metadata_to_file,
+    write_script_metadata_to_file_if_unchanged,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -90,9 +93,115 @@ struct EditableScriptMetadataDraft {
     edit_password_sha256: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdvancedMetadata {
+    localization: MetadataLocalizationEditor,
+    tags: Vec<String>,
+    custom_fields: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    custom_text: Option<String>,
+}
+
+#[tauri::command]
+fn edit_metadata_language(
+    mut editor: MetadataLocalizationEditor,
+    operation: MetadataLocalizationOperation,
+) -> Result<MetadataLocalizationEditor, String> {
+    editor.edit(operation).map_err(|error| error.to_string())?;
+    Ok(editor)
+}
+
+fn apply_advanced_metadata(
+    mut draft: ScriptMetadataDraft,
+    advanced: &AdvancedMetadata,
+    original: &BTreeMap<String, Vec<String>>,
+    style: ScriptMetaCommentStyle,
+) -> Result<ScriptMetadataDraft, String> {
+    draft.extensions.get_or_insert_with(Default::default).tags =
+        scriptmetakit::normalize_metadata_tags(&advanced.tags).map_err(|e| e.to_string())?;
+    draft = advanced
+        .localization
+        .applying_to(&draft)
+        .map_err(|e| e.to_string())?;
+    draft.custom_fields.clear();
+    if let Some(text) = &advanced.custom_text {
+        let validation = custom_text::parse_custom_metadata_text(text, original, style);
+        if let Some(issue) = validation.issues.first() {
+            return Err(format!("{}行目: {}", issue.line, issue.message));
+        }
+        draft.custom_fields = validation.fields;
+        return Ok(draft);
+    }
+    for (key, values) in &advanced.custom_fields {
+        let normalized =
+            scriptmetakit::normalize_custom_metadata_key(key).map_err(|e| e.to_string())?;
+        draft
+            .custom_fields
+            .entry(normalized)
+            .or_default()
+            .extend(values.clone());
+    }
+    Ok(draft)
+}
+
+// Omitted keys preserve the original source, including unchanged legacy-invalid values.
+fn custom_metadata_changes(
+    draft: &mut ScriptMetadataDraft,
+    original: &BTreeMap<String, Vec<String>>,
+) {
+    for (key, values) in original {
+        if draft.custom_fields.get(key) == Some(values) {
+            draft.custom_fields.remove(key);
+        } else {
+            draft.custom_fields.entry(key.clone()).or_default();
+        }
+    }
+}
+
+#[tauri::command]
+fn preview_metadata(
+    draft: EditableScriptMetadataDraft,
+    advanced: AdvancedMetadata,
+    style: String,
+    original_block: Option<String>,
+    original_custom_fields: BTreeMap<String, Vec<String>>,
+) -> Result<String, String> {
+    let mut draft = apply_advanced_metadata(
+        kit_draft_from_editable(draft)?,
+        &advanced,
+        &original_custom_fields,
+        custom_text::comment_style(&style)?,
+    )?;
+    custom_metadata_changes(&mut draft, &original_custom_fields);
+    let (path, open, close) = match style.as_str() {
+        "apple_script_block" => ("Preview.applescript", "(*", "*)"),
+        "plain_text" => ("Preview.txt", "", ""),
+        _ => ("Preview.jsx", "/*", "*/"),
+    };
+    if let Some(original) = original_block {
+        let source = format!("{open}\nSCRIPTMETA-BEGIN\n{original}\nSCRIPTMETA-END\n{close}");
+        return scriptmetakit::write_script_metadata_to_text(
+            &source,
+            Path::new(path),
+            &draft,
+            ScriptMetaWriteMode::InsertOrReplace,
+        )
+        .map(|result| result.text)
+        .map_err(|e| e.to_string());
+    }
+    let style = match style.as_str() {
+        "apple_script_block" => ScriptMetaCommentStyle::AppleScriptBlock,
+        "plain_text" => ScriptMetaCommentStyle::PlainText,
+        _ => ScriptMetaCommentStyle::JavaScriptBlock,
+    };
+    scriptmetakit::render_script_metadata_for_style(&draft, style).map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScriptMetadataEditDocument {
+    advanced: AdvancedMetadata,
     file_path: String,
     draft: EditableScriptMetadataDraft,
     comment_style: String,
@@ -106,6 +215,7 @@ struct ScriptMetadataEditDocument {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ScriptMetadataSaveRequest {
+    advanced: Option<AdvancedMetadata>,
     file_path: String,
     draft: EditableScriptMetadataDraft,
     mode: Option<String>,
@@ -261,7 +371,7 @@ async fn resolve_registered_scripts(
 fn load_script_metadata_document(file_path: String) -> Result<ScriptMetadataEditDocument, String> {
     let path = PathBuf::from(file_path);
     let result = read_script_metadata_draft_from_file(&path).map_err(|error| error.to_string())?;
-    Ok(edit_document_from_result(result))
+    edit_document_from_result(result)
 }
 
 #[tauri::command]
@@ -311,11 +421,12 @@ fn save_script_metadata_document(
     let backup_options = ScriptMetaBackupOptions {
         root_directory: backup_root,
     };
-    let write_result = write_script_metadata_to_file(
+    let write_result = write_script_metadata_to_file_if_unchanged(
         &path,
         &draft,
         ScriptMetaWriteMode::InsertOrReplace,
         Some(&backup_options),
+        Some(&request.source_fingerprint),
     )
     .map_err(|error| error.to_string())?;
 
@@ -327,7 +438,7 @@ fn save_script_metadata_document(
         backup_file_path: write_result
             .backup
             .map(|backup| backup.backup_file_path.display().to_string()),
-        document: edit_document_from_result(updated),
+        document: edit_document_from_result(updated)?,
     })
 }
 
@@ -423,9 +534,21 @@ fn normalize_folder_path(path: &Path) -> Result<String, String> {
 
 fn edit_document_from_result(
     result: scriptmetakit::ScriptMetadataEditReadResult,
-) -> ScriptMetadataEditDocument {
-    ScriptMetadataEditDocument {
+) -> Result<ScriptMetadataEditDocument, String> {
+    Ok(ScriptMetadataEditDocument {
         file_path: result.file_path.display().to_string(),
+        advanced: AdvancedMetadata {
+            custom_text: None,
+            localization: MetadataLocalizationEditor::from_draft(&result.draft)
+                .map_err(|e| e.to_string())?,
+            tags: result
+                .draft
+                .extensions
+                .as_ref()
+                .map(|v| v.tags.clone())
+                .unwrap_or_default(),
+            custom_fields: result.draft.custom_fields.clone(),
+        },
         draft: editable_draft_from_kit(result.draft),
         comment_style: comment_style_label(result.comment_style).to_string(),
         line_ending: result.line_ending,
@@ -433,7 +556,7 @@ fn edit_document_from_result(
         unknown_lines: result.unknown_lines,
         existing_block_text: result.existing_block_text,
         source_fingerprint: result.source_fingerprint,
-    }
+    })
 }
 
 fn editable_draft_from_kit(draft: ScriptMetadataDraft) -> EditableScriptMetadataDraft {
@@ -473,11 +596,12 @@ fn kit_draft_from_editable(
         author: optional_text(draft.author),
         release_date: optional_text(draft.release_date),
         edit_password_sha256: optional_text(draft.edit_password_sha256),
+        ..ScriptMetadataDraft::default()
     })
 }
 
 fn effective_kit_draft_for_save(
-    _current: &scriptmetakit::ScriptMetadataEditReadResult,
+    current: &scriptmetakit::ScriptMetadataEditReadResult,
     request: &ScriptMetadataSaveRequest,
 ) -> Result<ScriptMetadataDraft, String> {
     let mut draft = ScriptMetadataDraft::default();
@@ -534,7 +658,15 @@ fn effective_kit_draft_for_save(
     if let Some(meta_url) = draft.meta_url.as_ref() {
         validate_meta_url_is_information_page(meta_url)?;
     }
-
+    if let Some(advanced) = &request.advanced {
+        draft = apply_advanced_metadata(
+            draft,
+            advanced,
+            &current.draft.custom_fields,
+            current.comment_style,
+        )?;
+        custom_metadata_changes(&mut draft, &current.draft.custom_fields);
+    }
     Ok(draft)
 }
 
@@ -805,6 +937,7 @@ fn script_item_from_record(record: &RegisteredScript) -> Result<ScriptMetaItem, 
         .ok_or_else(|| "Meta-URL の形式が不正です。".to_string())?;
     let file_path = PathBuf::from(&record.file_path);
     let metadata = ScriptMetadata {
+        presentation: Default::default(),
         script_id: script_id.to_string(),
         version: Some(version.to_string()),
         description: record.description_text.clone(),
@@ -883,6 +1016,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             register_dropped_paths,
+            preview_metadata,
+            edit_metadata_language,
+            custom_text::validate_custom_metadata_text,
             load_saved_records,
             save_registered_folders,
             resolve_registered_scripts,
@@ -937,6 +1073,7 @@ mod tests {
         let display_path = PathBuf::from("/tmp/Alias/Photoshop/BrushPanel.jsx");
         let resolved_path = PathBuf::from("/tmp/Real/Photoshop/BrushPanel.jsx");
         let metadata = ScriptMetadata {
+            presentation: Default::default(),
             script_id: "org.example.BrushPanel".to_string(),
             version: Some("1".to_string()),
             description: None,
@@ -1001,6 +1138,228 @@ mod tests {
         }));
     }
 
+    fn advanced_fixture() -> (
+        String,
+        scriptmetakit::ScriptMetadataEditReadResult,
+        AdvancedMetadata,
+    ) {
+        let source = "/*\nSCRIPTMETA-BEGIN\nScript-ID=org.example.test\nMeta-Default-language=ja\nName=日本語\nName[en]=English\nAuthor=作者\nTags=画像,print\nX-org.example-Order=0020\nX-org.example-Note=\nX-org.example-Multi=first\nX-org.example-Multi=second\nUnknown=keep\nDescription-BEGIN\n[ja]\n日本語の説明\n[en]\nEnglish description\nDescription-END\nSCRIPTMETA-END\n*/\nconst untouched = true;\n".to_string();
+        let read =
+            scriptmetakit::read_script_metadata_draft_from_text(&source, Path::new("Test.jsx"))
+                .unwrap();
+        let advanced = AdvancedMetadata {
+            custom_text: None,
+            localization: MetadataLocalizationEditor::from_draft(&read.draft).unwrap(),
+            tags: read.draft.extensions.as_ref().unwrap().tags.clone(),
+            custom_fields: read.draft.custom_fields.clone(),
+        };
+        (source, read, advanced)
+    }
+
+    fn advanced_roundtrip(
+        source: &str,
+        read: &scriptmetakit::ScriptMetadataEditReadResult,
+        advanced: &AdvancedMetadata,
+    ) -> scriptmetakit::ScriptMetadataEditReadResult {
+        let request = ScriptMetadataSaveRequest {
+            advanced: Some(advanced.clone()),
+            draft: editable_draft_from_kit(read.draft.clone()),
+            file_path: "Test.jsx".into(),
+            mode: Some("localSubset".into()),
+            checked_fields: Some(vec!["scriptId".into()]),
+            source_fingerprint: read.source_fingerprint.clone(),
+        };
+        let draft = effective_kit_draft_for_save(read, &request).unwrap();
+        let result = scriptmetakit::write_script_metadata_to_text(
+            source,
+            Path::new("Test.jsx"),
+            &draft,
+            ScriptMetaWriteMode::InsertOrReplace,
+        )
+        .unwrap();
+        assert!(result.text.ends_with("const untouched = true;\n"));
+        assert!(result.text.contains("Unknown=keep"));
+        scriptmetakit::read_script_metadata_draft_from_text(&result.text, Path::new("Test.jsx"))
+            .unwrap()
+    }
+
+    #[test]
+    fn multilingual_tags_and_custom_values_roundtrip() {
+        let (source, read, mut advanced) = advanced_fixture();
+        advanced
+            .localization
+            .set_text(
+                scriptmetakit::MetadataLocalizedField::Description,
+                Some("en"),
+                Some("Changed English".into()),
+            )
+            .unwrap();
+        advanced.tags = vec![" print ".into(), "画像".into(), "print".into()];
+        advanced
+            .custom_fields
+            .insert("X-org.example-order".into(), vec!["0030".into()]);
+        let result = advanced_roundtrip(&source, &read, &advanced);
+        let editor = MetadataLocalizationEditor::from_draft(&result.draft).unwrap();
+        assert_eq!(
+            editor
+                .text(
+                    scriptmetakit::MetadataLocalizedField::Description,
+                    Some("ja")
+                )
+                .unwrap(),
+            Some("日本語の説明")
+        );
+        assert_eq!(
+            editor
+                .text(
+                    scriptmetakit::MetadataLocalizedField::Description,
+                    Some("en")
+                )
+                .unwrap(),
+            Some("Changed English")
+        );
+        assert_eq!(result.draft.extensions.unwrap().tags, vec!["print", "画像"]);
+        assert_eq!(
+            result.draft.custom_fields["X-org.example-order"],
+            vec!["0030"]
+        );
+        assert_eq!(
+            result.draft.custom_fields["X-org.example-multi"],
+            vec!["first", "second"]
+        );
+    }
+
+    #[test]
+    fn custom_delete_empty_value_and_rename_are_distinct() {
+        let (source, read, mut advanced) = advanced_fixture();
+        advanced.custom_fields.remove("X-org.example-order");
+        advanced
+            .custom_fields
+            .insert("X-org.example-renamed".into(), vec!["0020".into()]);
+        let result = advanced_roundtrip(&source, &read, &advanced);
+        assert!(
+            !result
+                .draft
+                .custom_fields
+                .contains_key("X-org.example-order")
+        );
+        assert_eq!(result.draft.custom_fields["X-org.example-note"], vec![""]);
+        assert_eq!(
+            result.draft.custom_fields["X-org.example-renamed"],
+            vec!["0020"]
+        );
+    }
+
+    #[test]
+    fn preview_preserves_existing_block_and_translations() {
+        let (_, read, advanced) = advanced_fixture();
+        let preview = preview_metadata(
+            editable_draft_from_kit(read.draft.clone()),
+            advanced,
+            "java_script_block".into(),
+            read.existing_block_text,
+            read.draft.custom_fields,
+        )
+        .unwrap();
+        assert_eq!(preview.matches("SCRIPTMETA-BEGIN").count(), 1);
+        assert!(preview.contains("Unknown=keep"));
+        assert!(preview.contains("Name[en]=English"));
+        assert!(preview.contains("X-org.example-Order=0020"));
+    }
+
+    #[test]
+    fn invalid_custom_changes_are_rejected_but_unchanged_values_survive() {
+        let source = "/*\nSCRIPTMETA-BEGIN\nScript-ID=org.example.test\nX-org.example-Note= Name=legacy\nSCRIPTMETA-END\n*/\nconst untouched = true;\n";
+        let read =
+            scriptmetakit::read_script_metadata_draft_from_text(source, Path::new("Test.jsx"))
+                .unwrap();
+        let advanced = AdvancedMetadata {
+            custom_text: None,
+            localization: MetadataLocalizationEditor::from_draft(&read.draft).unwrap(),
+            tags: vec![],
+            custom_fields: read.draft.custom_fields.clone(),
+        };
+        let preview = preview_metadata(
+            editable_draft_from_kit(read.draft.clone()),
+            advanced.clone(),
+            "java_script_block".into(),
+            read.existing_block_text.clone(),
+            read.draft.custom_fields.clone(),
+        )
+        .unwrap();
+        assert!(preview.contains("X-org.example-Note= Name=legacy"));
+        let mut changed = advanced;
+        changed
+            .custom_fields
+            .insert("X-org.example-new".into(), vec!["bad\nvalue".into()]);
+        assert!(
+            preview_metadata(
+                editable_draft_from_kit(read.draft.clone()),
+                changed,
+                "java_script_block".into(),
+                read.existing_block_text,
+                read.draft.custom_fields
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn language_removal_keeps_last_language_as_plain_text() {
+        let (_, _, mut advanced) = advanced_fixture();
+        advanced.localization.remove_language("en").unwrap();
+        advanced.localization.remove_language("ja").unwrap();
+        let draft = apply_advanced_metadata(
+            ScriptMetadataDraft {
+                script_id: "org.example.test".into(),
+                ..Default::default()
+            },
+            &advanced,
+            &BTreeMap::new(),
+            ScriptMetaCommentStyle::JavaScriptBlock,
+        )
+        .unwrap();
+        assert_eq!(draft.name.as_deref(), Some("日本語"));
+        assert_eq!(draft.description.as_deref(), Some("日本語の説明"));
+        assert!(draft.extensions.unwrap().default_language.is_none());
+    }
+
+    #[test]
+    fn multiline_custom_text_roundtrips_and_removes_deleted_keys() {
+        let (source, read, mut advanced) = advanced_fixture();
+        advanced.custom_text =
+            Some("X-iw-Note=\nX-iw-URL=https://example.com/?a=1&b=2\n\nX-iw-Note=second".into());
+        let saved = advanced_roundtrip(&source, &read, &advanced);
+        assert_eq!(saved.draft.custom_fields["X-iw-note"], vec!["", "second"]);
+        assert_eq!(
+            saved.draft.custom_fields["X-iw-url"],
+            vec!["https://example.com/?a=1&b=2"]
+        );
+        assert!(
+            !saved
+                .draft
+                .custom_fields
+                .contains_key("X-org.example-order")
+        );
+        assert_eq!(saved.draft.name, read.draft.name);
+    }
+
+    #[test]
+    fn save_revalidates_raw_custom_text_even_when_fields_map_is_valid() {
+        let (_, read, mut advanced) = advanced_fixture();
+        advanced.custom_text = Some("X-iw-Good=valid\nunfinished".into());
+        let request = ScriptMetadataSaveRequest {
+            advanced: Some(advanced),
+            draft: editable_draft_from_kit(read.draft.clone()),
+            file_path: "Test.jsx".into(),
+            mode: Some("localSubset".into()),
+            checked_fields: Some(vec!["scriptId".into()]),
+            source_fingerprint: read.source_fingerprint.clone(),
+        };
+        let error = effective_kit_draft_for_save(&read, &request).unwrap_err();
+        assert!(error.starts_with("2行目:"), "{error}");
+    }
+
     #[test]
     fn save_draft_omits_unchecked_existing_fields() {
         let current = scriptmetakit::ScriptMetadataEditReadResult {
@@ -1015,12 +1374,14 @@ mod tests {
             comment_style: ScriptMetaCommentStyle::JavaScriptBlock,
             line_ending: "\n".to_string(),
             has_existing_block: true,
+            diagnostics: Vec::new(),
             existing_lines: Vec::new(),
             unknown_lines: Vec::new(),
             existing_block_text: None,
             source_fingerprint: "fingerprint".to_string(),
         };
         let request = ScriptMetadataSaveRequest {
+            advanced: None,
             file_path: "/tmp/Test.jsx".to_string(),
             draft: EditableScriptMetadataDraft {
                 script_id: "com.example.test".to_string(),

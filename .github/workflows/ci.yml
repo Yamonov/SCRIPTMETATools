@@ -50,6 +50,7 @@ jobs:
           toolchain: 1.94.0
           components: clippy,rustfmt
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked

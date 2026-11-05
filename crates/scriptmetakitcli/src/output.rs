@@ -162,8 +162,55 @@ pub fn write_inspection_report(
                             .map_or("-".to_string(), ToString::to_string)
                     )
                 )?;
+                for (key, value) in [
+                    ("Name", &metadata.name),
+                    ("Author", &metadata.author),
+                    ("Description", &metadata.description),
+                ] {
+                    if let Some(value) = value {
+                        writeln!(output, "{key}: {}", human_cell(value))?;
+                    }
+                }
+                if let Some(extensions) = &metadata.extensions {
+                    if let Some(language) = &extensions.default_language {
+                        writeln!(output, "Meta-Default-language: {}", human_cell(language))?;
+                    }
+                    if !extensions.tags.is_empty() {
+                        writeln!(output, "Tags: {}", human_cell(&extensions.tags.join(", ")))?;
+                    }
+                    for (language, value) in &extensions.names {
+                        writeln!(
+                            output,
+                            "Name[{}]: {}",
+                            human_cell(language),
+                            human_cell(value)
+                        )?;
+                    }
+                    for (language, value) in &extensions.authors {
+                        writeln!(
+                            output,
+                            "Author[{}]: {}",
+                            human_cell(language),
+                            human_cell(value)
+                        )?;
+                    }
+                }
+                for (key, values) in &metadata.custom_fields {
+                    for value in values {
+                        writeln!(output, "{}: {}", human_cell(key), human_cell(value))?;
+                    }
+                }
             } else {
                 writeln!(output, "SCRIPTMETA: not found")?;
+            }
+            for diagnostic in &report.diagnostics {
+                writeln!(
+                    output,
+                    "Diagnostic: {}: {} (metadata line {:?})",
+                    human_cell(&diagnostic.code),
+                    human_cell(&diagnostic.field),
+                    diagnostic.line
+                )?;
             }
             if let Some(error) = report.metadata_error.as_ref() {
                 writeln!(
@@ -257,6 +304,26 @@ fn write_scan_human(
             human_cell(item.latest_version.as_deref().unwrap_or("-")),
             human_cell(&item.path.display().to_string())
         )?;
+        if options.verbose > 0 {
+            if let Some(author) = &item.author {
+                writeln!(output, "  author: {}", human_cell(author))?;
+            }
+            if let Some(description) = &item.description {
+                writeln!(output, "  description: {}", human_cell(description))?;
+            }
+            if !item.presentation.tags.is_empty() {
+                writeln!(
+                    output,
+                    "  tags: {}",
+                    human_cell(&item.presentation.tags.join(", "))
+                )?;
+            }
+            for (key, values) in &item.presentation.custom_fields {
+                for value in values {
+                    writeln!(output, "  {}: {}", human_cell(key), human_cell(value))?;
+                }
+            }
+        }
         if options.verbose > 0
             && let Some(error) = item.error.as_ref()
         {

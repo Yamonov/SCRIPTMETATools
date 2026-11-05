@@ -1,30 +1,60 @@
-# SCRIPTMETA Tools
+# SCRIPTMETA Tools 1.5.0
 
-Cross-platform tools powered by [SCRIPTMETAKit](https://github.com/Yamonov/SCRIPTMETAKit).
+macOS and Windows tools for working with [SCRIPTMETA](https://github.com/Yamonov/SCRIPTMETAKit) script metadata.
 
-## Included tools
+[日本語](README.ja.md) · [Download 1.5.0](https://github.com/Yamonov/SCRIPTMETATools/releases/tag/tools-v1.5.0) · [Changelog](CHANGELOG.md)
 
-### SCRIPTMETAKitMini 1.1.0
+## Downloads
 
-A macOS and Windows desktop application for scanning, reviewing, validating, and editing
-SCRIPTMETA-enabled scripts.
+| Tool | macOS — Apple Silicon and Intel | Windows — x64 |
+| --- | --- | --- |
+| **SCRIPTMETAKitMini 1.5.0** | [Universal DMG](https://github.com/Yamonov/SCRIPTMETATools/releases/download/tools-v1.5.0/SCRIPTMETAKitMini_1.5.0_macos_universal.dmg) | [Portable ZIP](https://github.com/Yamonov/SCRIPTMETATools/releases/download/tools-v1.5.0/SCRIPTMETAKitMini_1.5.0_windows_x64.zip) |
+| **scriptmeta CLI 1.5.0** | [Universal ZIP](https://github.com/Yamonov/SCRIPTMETATools/releases/download/tools-v1.5.0/scriptmeta_1.5.0_macos_universal.zip) | [Portable ZIP](https://github.com/Yamonov/SCRIPTMETATools/releases/download/tools-v1.5.0/scriptmeta_1.5.0_windows_x64.zip) |
 
-Source: [`apps/scriptmetamini`](apps/scriptmetamini)
+macOS binaries are Developer ID signed and notarized by Apple. The Mini app and DMG have stapled notarization tickets. Windows binaries are unsigned. Check the downloaded files against `SHA256SUMS.txt` in the release.
 
-### scriptmeta CLI 0.1.0
+On macOS, open the Mini DMG and drag the app to Applications. On Windows, extract the Mini ZIP and run `scriptmetakitmini.exe`; Microsoft Edge WebView2 Runtime is required. Extract the CLI ZIP and run `scriptmeta` / `scriptmeta.exe` from a terminal, or place it in a directory on your `PATH`.
 
-A read-only command-line tool for scanning SCRIPTMETA metadata, checking updates, inspecting
-individual files, and producing human, JSON, or JSONL output.
+## SCRIPTMETAKitMini
 
-Source: [`crates/scriptmetakitcli`](crates/scriptmetakitcli)
+The desktop application scans registered script folders, checks update metadata, and edits SCRIPTMETA blocks.
 
-## Shared engine
+- Edit **Name, Author, and Description in multiple languages**, with an independent language tab for each field. Empty translations are shown with a pale red tab.
+- Add languages from the `+` menu, remove a selected language with `−`, and drag languages to reorder them. The first language is the default. The language list supports up to ten added languages and preserves already-existing language entries.
+- Edit **Tags** as common metadata across languages. The tag area uses the editor's full width and does not wrap text inside individual tags.
+- Edit **user-defined `X-` fields** as `key=value`, one entry per line. Invalid lines are highlighted after a short typing pause; validation waits during IME composition and preserves native text selection and undo.
+- Preview metadata before saving. Saves detect external file changes, retain unknown/unchanged fields, and create backups.
+- Use Local Subset or Update Profile metadata. Update checks report availability and provide a link to the distribution page; they do not automatically install script updates.
 
-Both tools use the exact SCRIPTMETAKit `1.2.2` release tag at revision
-`b1c3803fdf8455ebfe6fd9990e75f24a7ec5f175`. Neither tool contains an app-side metadata parser
-fallback.
+Source and details: [`apps/scriptmetamini`](apps/scriptmetamini).
 
-## Build and test
+## scriptmeta CLI
+
+The CLI is **read-only**. It scans, checks updates, inspects metadata, and validates scripts without editing files, downloading releases, or installing updates.
+
+```console
+scriptmeta check ./Scripts
+scriptmeta scan ./Scripts --format json
+scriptmeta scan ./Scripts --language ja --language en --custom-key X- --format json
+scriptmeta inspect ./Scripts/Example.jsx --format json
+scriptmeta validate ./Scripts
+scriptmeta formats
+scriptmeta completions zsh
+```
+
+Passing directories without a subcommand performs an update check. At least one directory is required; use `.` explicitly for the current directory.
+
+`--language` sets the preferred display languages for `scan` and `check`, in priority order. The Kit selects Name, Author, and Description and reports the selected language for each. `Tags` are shared across languages.
+
+`--custom-key` requests custom metadata in `scan` / `check`; repeat it for specific keys, or pass `X-` for all supported custom keys. Custom keys are matched without ASCII case sensitivity. `inspect` returns all editable translations, Tags, and custom fields, including empty and repeated values. `validate` checks file metadata through the Kit and reports invalid custom/localization fields and duplicate Script-ID values.
+
+Human, JSON, and JSONL output are available. JSON schema version 1 retains the existing fields and adds `author`, `description`, and `presentation` to scan items; `presentation` contains language selection, Tags, requested custom fields, and diagnostics. Progress goes to stderr. See the [CLI README](crates/scriptmetakitcli/README.md) for options and exit codes.
+
+## Shared engine and source builds
+
+Both tools use SCRIPTMETAKit **2.1.1**, pinned to release tag `2.1.1` at revision `4f9bdb27483b869b2fb7280df0e2b2705bdd62f5`. The public project does not require a sibling Kit checkout. Metadata parsing, language conversion, validation, and serialization use the shared Kit.
+
+Rust 1.94.0 is specified by `rust-toolchain.toml`. Use Node.js 24 for the Mini frontend.
 
 ```console
 cd crates/scriptmetakitcli
@@ -34,16 +64,15 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 cd ../../apps/scriptmetamini
 npm ci
+npm test
 npm run build
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features --locked -- -D warnings
 ```
 
-See [`RELEASING.md`](RELEASING.md) for signed macOS and native Windows packaging.
+See [RELEASING.md](RELEASING.md) for signed macOS Universal and native Windows packaging.
 
 ## License
 
-The source code in this repository is available under the [MIT License](LICENSE).
-SCRIPTMETAKit and other dependencies remain under their respective licenses; see
-[`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+Source code: [MIT](LICENSE). SCRIPTMETAKit remains Apache-2.0 licensed. Dependency notices and license texts are included with the downloads and in [NOTICE](NOTICE) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
