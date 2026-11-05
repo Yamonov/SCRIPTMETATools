@@ -55,6 +55,14 @@ pub enum Command {
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Options {
+    /// Preferred metadata display language for scan/check. Repeat in priority order.
+    #[arg(long = "language", value_name = "BCP47", global = true)]
+    pub languages: Vec<String>,
+
+    /// Custom metadata key to include in scan/check. Repeat, or use X- for all keys.
+    #[arg(long = "custom-key", value_name = "KEY", global = true)]
+    pub custom_keys: Vec<String>,
+
     /// Output format. Machine-readable formats never contain progress text.
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, global = true)]
     pub format: OutputFormat,

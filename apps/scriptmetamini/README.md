@@ -1,34 +1,28 @@
-# SCRIPTMETAKitMini
+# SCRIPTMETAKitMini 1.5.0
 
-SCRIPTMETAKitMini is a cross-platform Tauri desktop application for scanning, reviewing,
-validating, and editing SCRIPTMETA-enabled scripts.
+Desktop metadata editor and update checker for macOS and Windows, powered by SCRIPTMETAKit 2.1.1.
 
-Version `1.1.0` uses SCRIPTMETAKit `1.2.2` from its public release tag.
-The bundle identifier remains `com.yamo.scriptmetakitapp` so existing version 1.0 installations
-retain their application identity and stored data.
+Register script folders, select a script, edit its metadata, and save with backup and external-change detection. The language list uses `+` / `−` controls and drag reordering; its first entry is the default language. Name, Author, and Description each have independent language tabs, with empty translations marked in pale red. The multilingual checkbox controls whether changes to the language structure are included in the save; existing-language text edits are retained when it is unchecked.
 
-## Development
+Tags are shared across languages. The full-width tag area wraps between tags rather than inside them. User-defined `X-` fields are entered as `key=value`, one per line, above Description. Invalid lines are highlighted after a typing pause, with IME composition, selection, and undo preserved. A blank value (`X-iw-Note=`) differs from deleting the entire line. Repeated keys are supported.
+
+Update checks report available versions and open distribution pages; they do not automatically replace scripts. Metadata syntax, validation, and writing are implemented by the shared Kit.
+
+## Install
+
+- macOS: copy `SCRIPTMETAKitMini.app` from the DMG to Applications. The Universal app supports Apple Silicon and Intel, is Developer ID signed, notarized, and stapled.
+- Windows x64: extract the portable ZIP and run `scriptmetakitmini.exe`. Microsoft Edge WebView2 Runtime is required. The executable is unsigned.
+
+## Build and test from source
 
 ```console
 npm ci
-npm run tauri dev
-```
-
-## Validation
-
-```console
+npm test
 npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features --locked -- -D warnings
 ```
 
-## Distribution
+Use `npm run tauri -- dev` to run a development build. Release packaging is documented in the repository's `RELEASING.md`.
 
-See [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) and the repository-level
-[`RELEASING.md`](../../RELEASING.md).
-
-## License
-
-MIT. SCRIPTMETAKit and other dependencies retain their original licenses. See the repository
-`LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.md` files.
+Downloads and source: https://github.com/Yamonov/SCRIPTMETATools

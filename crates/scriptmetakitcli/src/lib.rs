@@ -184,6 +184,10 @@ fn validate_existing_paths(paths: &[PathBuf]) -> Result<(), CliError> {
 }
 
 fn validate_options(options: &Options) -> Result<(), CliError> {
+    scriptmetakit::LanguagePreferences::new(&options.languages)
+        .map_err(|error| CliError::Input(error.to_string()))?;
+    scriptmetakit::CustomMetadataSelection::new(&options.custom_keys)
+        .map_err(|error| CliError::Input(error.to_string()))?;
     if options.concurrency == 0 {
         return Err(CliError::Input(
             "--concurrency must be greater than zero".to_string(),

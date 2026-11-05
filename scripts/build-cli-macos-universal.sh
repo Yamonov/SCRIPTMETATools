@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFEST="$ROOT/crates/scriptmetakitcli/Cargo.toml"
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$MANIFEST")"
-DIST_DIR="$ROOT/dist"
+DIST_DIR="${SCRIPTMETA_RELEASE_DIR:-$ROOT/dist}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/.tools/cargo-target}"
 STAGE_NAME="scriptmeta_${VERSION}_macos_universal"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 UNIVERSAL_BIN="$STAGE_DIR/scriptmeta"
@@ -27,16 +28,20 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
   exit 1
 fi
 
+if [[ -e "$STAGE_DIR" || -e "$ZIP_PATH" ]]; then
+  echo "Release output already exists; move it aside before rebuilding: $STAGE_DIR" >&2
+  exit 1
+fi
+
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
   rustup target add "$target"
   cargo build --manifest-path "$MANIFEST" --release --locked --target "$target"
 done
 
-rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR" "$DIST_DIR"
 lipo -create \
-  "$ROOT/crates/scriptmetakitcli/target/aarch64-apple-darwin/release/scriptmeta" \
-  "$ROOT/crates/scriptmetakitcli/target/x86_64-apple-darwin/release/scriptmeta" \
+  "$CARGO_TARGET_DIR/aarch64-apple-darwin/release/scriptmeta" \
+  "$CARGO_TARGET_DIR/x86_64-apple-darwin/release/scriptmeta" \
   -output "$UNIVERSAL_BIN"
 codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$UNIVERSAL_BIN"
 if strings "$UNIVERSAL_BIN" | grep -F "$HOME"; then
@@ -45,12 +50,13 @@ if strings "$UNIVERSAL_BIN" | grep -F "$HOME"; then
 fi
 cp "$ROOT/LICENSE" "$STAGE_DIR/LICENSE.txt"
 cp "$ROOT/NOTICE" "$STAGE_DIR/NOTICE.txt"
+cp "$ROOT/crates/scriptmetakitcli/README.md" "$STAGE_DIR/README.md"
 cp "$ROOT/THIRD_PARTY_LICENSES.md" "$STAGE_DIR/THIRD_PARTY_LICENSES.md"
 
-rm -f "$ZIP_PATH"
 ditto -c -k --keepParent "$STAGE_DIR" "$ZIP_PATH"
-xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$KEYCHAIN_PROFILE" --wait
-codesign --verify --strict --verbose=2 "$UNIVERSAL_BIN"
+xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$KEYCHAIN_PROFILE" --wait --output-format json > "$ZIP_PATH.notary.json"
+[[ "$(plutil -extract status raw -o - "$ZIP_PATH.notary.json")" == "Accepted" ]]
+codesign --verify --strict --verbose=2 -R=notarized --check-notarization "$UNIVERSAL_BIN"
 
 echo "Built universal CLI: $UNIVERSAL_BIN"
 echo "Built zip: $ZIP_PATH"

@@ -220,8 +220,18 @@ Used by:
 ### Apache License 2.0 (`Apache-2.0`)
 
 Used by:
+- `windows-collections 0.3.2` — https://github.com/microsoft/windows-rs
+- `windows-core 0.62.2` — https://github.com/microsoft/windows-rs
+- `windows-future 0.3.2` — https://github.com/microsoft/windows-rs
+- `windows-implement 0.60.2` — https://github.com/microsoft/windows-rs
+- `windows-interface 0.59.3` — https://github.com/microsoft/windows-rs
 - `windows-link 0.2.1` — https://github.com/microsoft/windows-rs
+- `windows-numerics 0.3.1` — https://github.com/microsoft/windows-rs
+- `windows-result 0.4.1` — https://github.com/microsoft/windows-rs
+- `windows-strings 0.5.1` — https://github.com/microsoft/windows-rs
 - `windows-sys 0.61.2` — https://github.com/microsoft/windows-rs
+- `windows-threading 0.2.1` — https://github.com/microsoft/windows-rs
+- `windows 0.62.2` — https://github.com/microsoft/windows-rs
 
 ```text
                                  Apache License
@@ -431,7 +441,7 @@ Used by:
 ### Apache License 2.0 (`Apache-2.0`)
 
 Used by:
-- `scriptmetakit 1.2.2`
+- `scriptmetakit 2.1.1`
 
 ```text
                                  Apache License
@@ -3413,9 +3423,10 @@ limitations under the License.
 ### Apache License 2.0 (`Apache-2.0`)
 
 Used by:
-- `scriptmetakit_macos_io 1.2.2`
+- `scriptmetakit_macos_io 2.1.1`
 - `dispatch2 0.3.1` — https://github.com/madsmtm/objc2
 - `itoa 1.0.18` — https://github.com/dtolnay/itoa
+- `language-tags 0.3.2` — https://github.com/pyfisch/rust-language-tags
 - `libc 0.2.189` — https://github.com/rust-lang/libc
 - `pin-project-lite 0.2.17` — https://github.com/taiki-e/pin-project-lite
 - `proc-macro2 1.0.107` — https://github.com/dtolnay/proc-macro2
@@ -4127,7 +4138,7 @@ SOFTWARE.
 ### MIT License (`MIT`)
 
 Used by:
-- `scriptmetakitcli 0.1.0`
+- `scriptmetakitcli 1.5.0`
 - `block2 0.6.2` — https://github.com/madsmtm/objc2
 - `objc2-encode 4.1.0` — https://github.com/madsmtm/objc2
 - `objc2-foundation 0.3.2` — https://github.com/madsmtm/objc2
@@ -4488,7 +4499,6 @@ Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 
 ```
-
 
 
 ## SCRIPTMETAKitMini Rust dependencies
@@ -5133,23 +5143,31 @@ Used by:
 
 Used by:
 - `windows-collections 0.2.0` — https://github.com/microsoft/windows-rs
+- `windows-collections 0.3.2` — https://github.com/microsoft/windows-rs
 - `windows-core 0.61.2` — https://github.com/microsoft/windows-rs
+- `windows-core 0.62.2` — https://github.com/microsoft/windows-rs
 - `windows-future 0.2.1` — https://github.com/microsoft/windows-rs
+- `windows-future 0.3.2` — https://github.com/microsoft/windows-rs
 - `windows-implement 0.60.2` — https://github.com/microsoft/windows-rs
 - `windows-interface 0.59.3` — https://github.com/microsoft/windows-rs
 - `windows-link 0.1.3` — https://github.com/microsoft/windows-rs
 - `windows-link 0.2.1` — https://github.com/microsoft/windows-rs
 - `windows-numerics 0.2.0` — https://github.com/microsoft/windows-rs
+- `windows-numerics 0.3.1` — https://github.com/microsoft/windows-rs
 - `windows-result 0.3.4` — https://github.com/microsoft/windows-rs
+- `windows-result 0.4.1` — https://github.com/microsoft/windows-rs
 - `windows-strings 0.4.2` — https://github.com/microsoft/windows-rs
+- `windows-strings 0.5.1` — https://github.com/microsoft/windows-rs
 - `windows-sys 0.59.0` — https://github.com/microsoft/windows-rs
 - `windows-sys 0.60.2` — https://github.com/microsoft/windows-rs
 - `windows-sys 0.61.2` — https://github.com/microsoft/windows-rs
 - `windows-targets 0.52.6` — https://github.com/microsoft/windows-rs
 - `windows-targets 0.53.5` — https://github.com/microsoft/windows-rs
 - `windows-threading 0.1.0` — https://github.com/microsoft/windows-rs
+- `windows-threading 0.2.1` — https://github.com/microsoft/windows-rs
 - `windows-version 0.1.7` — https://github.com/microsoft/windows-rs
 - `windows 0.61.3` — https://github.com/microsoft/windows-rs
+- `windows 0.62.2` — https://github.com/microsoft/windows-rs
 - `windows_x86_64_msvc 0.52.6` — https://github.com/microsoft/windows-rs
 - `windows_x86_64_msvc 0.53.1` — https://github.com/microsoft/windows-rs
 
@@ -5361,7 +5379,7 @@ Used by:
 ### Apache License 2.0 (`Apache-2.0`)
 
 Used by:
-- `scriptmetakit 1.2.2`
+- `scriptmetakit 2.1.1`
 
 ```text
                                  Apache License
@@ -10481,7 +10499,7 @@ limitations under the License.
 ### Apache License 2.0 (`Apache-2.0`)
 
 Used by:
-- `scriptmetakit_macos_io 1.2.2`
+- `scriptmetakit_macos_io 2.1.1`
 - `anyhow 1.0.104` — https://github.com/dtolnay/anyhow
 - `dirs-sys 0.5.0` — https://github.com/dirs-dev/dirs-sys-rs
 - `dirs 6.0.0` — https://github.com/soc/dirs-rs
@@ -10493,6 +10511,7 @@ Used by:
 - `fdeflate 0.3.7` — https://github.com/image-rs/fdeflate
 - `ident_case 1.0.1` — https://github.com/TedDriggs/ident_case
 - `itoa 1.0.18` — https://github.com/dtolnay/itoa
+- `language-tags 0.3.2` — https://github.com/pyfisch/rust-language-tags
 - `libc 0.2.189` — https://github.com/rust-lang/libc
 - `miniz_oxide 0.8.9` — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 - `num-conv 0.2.2` — https://github.com/jhpratt/num-conv
@@ -11645,7 +11664,7 @@ developed by Chen Jiaju, licensed under the MIT License and the Apache License 2
 ### MIT License (`MIT`)
 
 Used by:
-- `scriptmetakitmini 1.1.0`
+- `scriptmetakitmini 1.5.0`
 - `block2 0.6.2` — https://github.com/madsmtm/objc2
 - `brotli-decompressor 5.0.3` — https://github.com/dropbox/rust-brotli-decompressor
 - `dpi 0.1.2` — https://github.com/rust-windowing/winit
@@ -13377,7 +13396,6 @@ the following restrictions:
 
 3. This notice may not be removed or altered from any source distribution.
 ```
-
 
 
 ## SCRIPTMETAKitMini bundled npm dependencies

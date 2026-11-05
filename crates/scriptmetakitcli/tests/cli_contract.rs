@@ -409,3 +409,170 @@ fn paths_from_stdin_is_supported() {
         .success()
         .stdout(predicate::str::contains("com.example.stdin"));
 }
+
+fn write_localized_script(path: &Path) -> String {
+    let source = "/*\nSCRIPTMETA-BEGIN\nScript-ID=org.example.localized\nMeta-Default-language=ja\nName=日本語の名前\nName[en]=English name\nAuthor=作者\nAuthor[en]=Author\nTags=画像,export\nX-iw-Group=Production\nX-iw-Note=\nX-iw-Note=second\nDescription-BEGIN\n[ja]\n日本語の説明\n[en]\nEnglish description\nDescription-END\nSCRIPTMETA-END\n*/\n".to_string();
+    fs::write(path, &source).unwrap();
+    source
+}
+
+#[test]
+fn scan_selects_language_and_requested_custom_fields_without_modifying_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("Localized.jsx");
+    let source = write_localized_script(&path);
+    let output = scriptmeta()
+        .args([
+            "scan",
+            "--format",
+            "json",
+            "--language",
+            "en",
+            "--custom-key",
+            "X-",
+        ])
+        .arg(temp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output).unwrap();
+    let item = &report["items"][0];
+    assert_eq!(report["scriptmeta_version"], "1.5.0");
+    assert_eq!(report["scriptmetakit_version"], "2.1.1");
+    assert_eq!(item["name"], "English name");
+    assert_eq!(item["description"], "English description");
+    assert_eq!(item["presentation"]["name_language"], "en");
+    assert_eq!(
+        item["presentation"]["tags"],
+        serde_json::json!(["画像", "export"])
+    );
+    assert_eq!(
+        item["presentation"]["custom_fields"]["X-iw-note"],
+        serde_json::json!(["", "second"])
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), source);
+}
+
+#[test]
+fn scan_custom_fields_are_opt_in_and_can_be_selected_case_insensitively() {
+    let temp = tempfile::tempdir().unwrap();
+    write_localized_script(&temp.path().join("Localized.jsx"));
+    let output = scriptmeta()
+        .args(["scan", "--format", "json"])
+        .arg(temp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output).unwrap();
+    assert!(
+        report["items"][0]["presentation"]
+            .get("custom_fields")
+            .is_none()
+    );
+    let output = scriptmeta()
+        .args(["scan", "--format", "json", "--custom-key", "x-IW-Group"])
+        .arg(temp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output).unwrap();
+    let fields = &report["items"][0]["presentation"]["custom_fields"];
+    assert_eq!(fields["X-iw-group"], serde_json::json!(["Production"]));
+    assert!(fields.get("X-iw-note").is_none());
+}
+
+#[test]
+fn inspect_exposes_all_translations_tags_and_custom_values() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("Localized.jsx");
+    write_localized_script(&path);
+    let output = scriptmeta()
+        .args(["inspect", "--format", "json"])
+        .arg(&path)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(
+        report["metadata"]["extensions"]["names"]["en"],
+        "English name"
+    );
+    assert_eq!(
+        report["metadata"]["custom_fields"]["X-iw-note"],
+        serde_json::json!(["", "second"])
+    );
+    scriptmeta()
+        .arg("inspect")
+        .arg(path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Name[en]: English name"))
+        .stdout(predicate::str::contains("Tags: 画像, export"))
+        .stdout(predicate::str::contains("X-iw-group: Production"));
+}
+
+#[test]
+fn validate_rejects_invalid_custom_metadata_in_files_and_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("Invalid.jsx");
+    fs::write(&path, "/*\nSCRIPTMETA-BEGIN\nScript-ID=org.example.invalid\nX-iw-Note=bad Name=Other\nSCRIPTMETA-END\n*/").unwrap();
+    for target in [&path, &temp.path().to_path_buf()] {
+        scriptmeta()
+            .args(["validate", "--format", "json"])
+            .arg(target)
+            .assert()
+            .code(4)
+            .stdout(predicate::str::contains("custom_metadata_legacy_field"));
+    }
+}
+
+#[test]
+fn invalid_language_and_custom_key_are_usage_errors() {
+    scriptmeta()
+        .args(["formats", "--language", "not_a_tag"])
+        .assert()
+        .code(2);
+    scriptmeta()
+        .args(["formats", "--custom-key", "X-Bad"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn validate_reports_invalid_localized_and_custom_keys() {
+    for field in ["Name[jp]=Bad language", "X-Custom=Bad key"] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("Invalid.jsx");
+        fs::write(&path, format!("/*\nSCRIPTMETA-BEGIN\nScript-ID=org.example.invalid\nName=Valid\n{field}\nSCRIPTMETA-END\n*/")).unwrap();
+        scriptmeta()
+            .args(["validate", "--format", "json"])
+            .arg(path)
+            .assert()
+            .code(4);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn directory_validation_reads_the_resolved_target_of_extensionless_links() {
+    let temp = tempfile::tempdir().unwrap();
+    let scripts = temp.path().join("scripts");
+    fs::create_dir(&scripts).unwrap();
+    let target = temp.path().join("Target.jsx");
+    write_localized_script(&target);
+    std::os::unix::fs::symlink(&target, scripts.join("Reference")).unwrap();
+    scriptmeta()
+        .args(["validate", "--format", "json"])
+        .arg(scripts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"valid_items\": 1"));
+}

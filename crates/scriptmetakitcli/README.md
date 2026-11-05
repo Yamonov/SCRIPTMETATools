@@ -1,11 +1,29 @@
-# scriptmetakitcli
+# scriptmeta CLI 1.5.0
 
 `scriptmetakitcli` is a read-only, cross-platform command-line interface for
 [SCRIPTMETAKit](https://github.com/Yamonov/SCRIPTMETAKit). The executable is named
 `scriptmeta`.
 
-The project currently uses SCRIPTMETAKit `1.2.2` directly from its release tag. It does not use
+The project currently uses SCRIPTMETAKit `2.1.1` directly from its release tag. It does not use
 the C FFI or Swift wrapper.
+
+## Downloads
+
+The `tools-v1.5.0` GitHub Release provides `scriptmeta_1.5.0_macos_universal.zip` (Developer ID signed and notarized) and `scriptmeta_1.5.0_windows_x64.zip` (unsigned). Extract the archive and run the executable, or add its directory to `PATH`. In PowerShell, use `.\scriptmeta.exe` when running from the current directory.
+
+## Multilingual metadata, Tags, and custom fields
+
+```console
+scriptmeta scan ./Scripts --language ja --language en --custom-key X- --format json
+scriptmeta scan ./Scripts --custom-key X-org.example-Group --format jsonl
+scriptmeta inspect ./Scripts/Example.jsx --format json
+```
+
+For `scan` and `check`, repeat `--language` in priority order. The Kit selects Name, Author, and Description; JSON items include their selected values and a `presentation` object with selection provenance, common Tags, requested custom fields, and diagnostics. Repeat `--custom-key` for individual keys or use `X-` for all supported keys. Custom keys are case-insensitive and are opt-in for scan results.
+
+`inspect` returns the complete editing draft, including translated Name/Author, the raw multilingual Description, Tags, custom values, and diagnostics. It is not limited by the scan selection flags. Empty and repeated custom values remain distinct. Use `validate` for strict validity checking; inspection diagnostics are informational.
+
+JSON schema version remains 1. The new scan properties `author`, `description`, and `presentation`, plus inspection `diagnostics`, are additive.
 
 ## Build
 
@@ -81,6 +99,8 @@ operation, not only the filtered items.
 --progress auto|always|never
 --color auto|always|never
 --fail-on never|errors|updates|updates-or-errors
+--language <BCP47>             Preferred scan/check language; repeat in priority order
+--custom-key <KEY>             Requested scan/check custom key; repeat or use X-
 --status <STATUS>
 --concurrency <COUNT>          Default: 6
 --retries <COUNT>              Default: 2
@@ -113,7 +133,7 @@ Use `--fail-on never` when every completed report should return zero.
 
 ## Safety boundaries
 
-Version `0.1.0` is read-only. It does not edit SCRIPTMETA blocks, download releases, install
+Version `1.5.0` is read-only. It does not edit SCRIPTMETA blocks, download releases, install
 updates, create backups, maintain a persistent cache, or run as a resident watcher. On macOS,
 `--decompile-osa` may invoke the system `osadecompile` tool to inspect compiled scripts; it does
 not execute the script.
